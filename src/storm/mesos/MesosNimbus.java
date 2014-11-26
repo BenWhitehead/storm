@@ -20,7 +20,6 @@ package storm.mesos;
 import backtype.storm.Config;
 import backtype.storm.scheduler.*;
 import backtype.storm.utils.LocalState;
-import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.protobuf.ByteString;
 import org.apache.commons.lang.builder.ToStringBuilder;
@@ -37,9 +36,6 @@ import org.apache.mesos.SchedulerDriver;
 import org.json.simple.JSONValue;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
-import java.net.URISyntaxException;
-import java.net.URL;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -70,8 +66,6 @@ public class MesosNimbus implements INimbus {
   Set<String> _disallowedHosts;
   Optional<Integer> _localFileServerPort;
   private RotatingMap<OfferID, Offer> _offers;
-  private LocalFileServer _httpServer;
-  private java.net.URI _configUrl;
   private Map<TaskID, Offer> used_offers;
   private ScheduledExecutorService timerScheduler =
       Executors.newScheduledThreadPool(1);
@@ -134,10 +128,6 @@ public class MesosNimbus implements INimbus {
       } else {
         _localFileServerPort = Optional.of(port);
       }
-
-      _httpServer = new LocalFileServer();
-      _configUrl = _httpServer.serveDir("/conf", "conf", _localFileServerPort);
-      LOG.info("Started serving config dir under " + _configUrl);
 
       MesosSchedulerDriver driver =
           new MesosSchedulerDriver(
@@ -453,14 +443,6 @@ public class MesosNimbus implements INimbus {
               if (memRole == null) memRole = "*";
               if (portsRole == null) portsRole = "*";
 
-              String configUri;
-              try {
-                configUri = new URL(_configUrl.toURL(),
-                    _configUrl.getPath() + "/storm.yaml").toString();
-              } catch (MalformedURLException e) {
-                throw new RuntimeException(e);
-              }
-
               if (!subtractedExecutorResources) {
                 workerCpu -= executorCpu;
                 workerMem -= executorMem;
@@ -478,9 +460,7 @@ public class MesosNimbus implements INimbus {
                           .setData(ByteString.copyFromUtf8(executorDataStr))
                           .setCommand(CommandInfo.newBuilder()
                               .addUris(URI.newBuilder().setValue((String) _conf.get(CONF_EXECUTOR_URI)))
-                              .addUris(URI.newBuilder().setValue(configUri))
-                              .setValue("cp storm.yaml storm-mesos*/conf && cd storm-mesos* && python bin/storm " +
-                                  "supervisor storm.mesos.MesosSupervisor"))
+                              .setValue("cd storm-mesos* && python bin/storm supervisor storm.mesos.MesosSupervisor"))
                           .addResources(Resource.newBuilder()
                               .setName("cpus")
                               .setType(Type.SCALAR)
@@ -616,11 +596,6 @@ public class MesosNimbus implements INimbus {
     @Override
     public void error(SchedulerDriver driver, String msg) {
       LOG.error("Received fatal error \nmsg:" + msg + "\nHalting process...");
-      try {
-        _httpServer.shutdown();
-      } catch (Exception e) {
-        // Swallow. Nothing we can do about it now.
-      }
       Runtime.getRuntime().halt(2);
     }
 
